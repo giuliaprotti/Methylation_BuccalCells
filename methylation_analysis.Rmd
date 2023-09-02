@@ -1,0 +1,986 @@
+---
+title: "Methylation analysis"
+date: "`r format(Sys.time(), '%Y %B %d')`"
+output:
+    html_notebook:
+        self_contained: true
+        df_print: paged
+        fig_height: 6
+        fig_width: 6
+        highlight: zenburn
+        theme: cosmo
+        number_sections: yes
+        toc: yes
+        toc_depth: 6
+        toc_float:
+            collapsed: false
+---
+
+```{r setup}
+knitr::opts_chunk$set(
+    echo = TRUE,
+    message = FALSE,
+    warning = FALSE
+)
+```
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(RColorBrewer)
+library(data.table)
+library(ggrepel)
+library(pheatmap)
+library(ggpubr)
+library(pracma)
+library(robustHD)
+library(reshape2)
+library(wordspace)
+library(biomaRt)
+library(openxlsx)
+library(readxl)
+library(magrittr)
+library(purrr)
+```
+
+# Read in methylation matrix and metadata
+
+```{r}
+X <- read.table('C:/Users/protti/Desktop/Methylation/matlab/meth_matrix.txt', header = T, row.names = 1)
+metadata <- read.table('C:/Users/protti/Desktop/Methylation/1. MSEPM/Tables/metadata.txt', header = T, sep='\t', row.names = 1)
+```
+
+```{r}
+Y <- as.data.frame(scale(metadata, center = FALSE, scale = TRUE))
+Y$added_col <- 1
+```
+
+```{r}
+Ypred <- list()
+
+for (i in 1:178){
+
+    Xtrain = as.matrix(X[-i, ])
+    Xtest = as.matrix(X[i, ])
+
+    Ytrain = as.matrix(Y[-i, ])
+    
+    C = pinv(Ytrain) %*% Xtrain
+    Ypred[[i]] = Xtest %*% pinv(C)
+}
+
+Ypred <- as.data.frame(do.call(rbind, Ypred))
+```
+
+```{r}
+Y <- Y[,1:28]
+names(Y)[c(6:11,22,28)] <- c('% Blood Neutrophils','Neutrophil count','% Blood Lymphocytes','Lymphocyte count','% Blood Monocytes','% Blood Eosinophils','Total Cholesterol','% Epithelial cells')
+
+Ypred <- Ypred[,1:28]
+colnames(Ypred) <- colnames(Y)
+```
+
+```{r}
+cormat <- as.data.frame(round(cor(Ypred,Y, method='spearman'),2))
+```
+
+```{r}
+ord <- hclust(dist(cormat, method = "euclidean"), method = "complete" )$order
+cormat <- as.matrix(cormat[rownames(cormat)[ord],rownames(cormat)[ord] ])
+
+melted_cormat <- melt(cormat)
+melted_cormat$diag <- melted_cormat$Var1 == melted_cormat$Var2
+melted_cormat$diag[!melted_cormat$diag] <- NA
+```
+
+```{r}
+ggplot(data = melted_cormat, aes(x=Var2, y=Var1, fill=value)) + 
+  geom_tile(color = "darkgrey")+
+  geom_tile(data = melted_cormat[!is.na(melted_cormat$diag), ], aes(color = diag), size = 0.5) +
+  scale_color_manual(guide = FALSE, values = c(`TRUE` = "black"))+
+  scale_fill_gradient2(high = "#FDE725FF", low = "#440154FF", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Spearman\nCorrelation") +
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 2.5) +
+theme(axis.title = element_blank(), 
+  panel.background = element_blank(), axis.text.x = element_text(angle=45, hjust=1,vjust=1), axis.text=element_text(color='black', size=8))
+```
+
+```{r}
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile(color = "darkgrey")+
+  geom_tile(data = melted_cormat[!is.na(melted_cormat$diag), ], aes(color = diag), size = 0.5) +
+  scale_color_manual(guide = FALSE, values = c(`TRUE` = "black"))+
+  scale_fill_gradient2(high = "#FDE725FF", low = "#440154FF", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Spearman\nCorrelation") +
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 2.5) +
+theme(axis.title = element_blank(), 
+  panel.background = element_blank(), axis.text.x = element_text(angle=45, hjust=1,vjust=1), axis.text=element_text(color='black', size=8))
+
+```
+
+# Scatterplots
+
+```{r}
+colnames(Ypred) <- colnames(metadata)
+df <- merge(Y, Ypred, by=0)
+rownames(df) <- df$Row.names
+df$Row.names <- NULL
+```
+
+```{r fig.width=2, fig.height=2.1}
+ggscatter(df, x = "Glucose.x", y = "Glucose.y", size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("SpO2")
+```
+
+
+```{r fig.width=3, fig.height=3.1}
+ggscatter(df, x = "Batch.x", y = "Batch.y", size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Batch")
+```
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "Age.x", y = "Age.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE,size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Age")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "Sex.x", y = "Sex.y", size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Sex")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "% Epithelial cells", y = "X..Epithelial.cells", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE,size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")),size=2) +  
+ggtitle("% Epithelial cells")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "% Blood Neutrophils", y = "X..Blood.Neutrophils", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("% Blood Neutrophils")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "HDL.x", y = "HDL.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("HDL")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "Hemoglobin.x", y = "Hemoglobin.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Hemoglobin")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "RDW.x", y = "RDW.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("RDW")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "Urea.x", y = "Urea.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Urea")
+```
+
+```{r fig.width=1.05, fig.height=1.1}
+ggscatter(df, x = "% Blood Lymphocytes", y = "X..Blood.Lymphocytes", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("% Blood Lymphocytes")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "Lymphocyte count", y = "Lymphocyte.count", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Lymphocyte count")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "CRP.x", y = "CRP.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("CRP")
+```
+
+```{r fig.width=1, fig.height=1.1}
+ggscatter(df, x = "NLR.x", y = "NLR.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("NLR")
+```
+
+
+# Keep factors with correlation > 0.3
+
+```{r}
+factors <- melted_cormat[melted_cormat$diag == 'TRUE' & melted_cormat$value > 0.3, ] 
+factors <- drop_na(factors)
+factors$Var1
+```
+Remove % lymphocytes, Lymphocyte count, CRP, NLR. 
+
+# Re-run predictions only for the 9 factors
+
+```{r}
+metadata <- metadata[,c(1,2,6,12,13,16,21,27,28)]
+Y <- as.data.frame(scale(metadata, center = FALSE, scale = TRUE))
+Y$added_col <- 1
+```
+
+```{r}
+Ypred <- list()
+
+for (i in 1:178){
+
+    Xtrain = as.matrix(X[-i, ])
+    Xtest = as.matrix(X[i, ])
+
+    Ytrain = as.matrix(Y[-i, ])
+    
+    C = pinv(Ytrain) %*% Xtrain
+    Ypred[[i]] = Xtest %*% pinv(C)
+}
+Ypred <- as.data.frame(do.call(rbind, Ypred))
+```
+
+```{r}
+Y <- Y[,1:9]
+Ypred <- Ypred[,1:9]
+
+cormat <- as.data.frame(round(cor(Ypred,Y, method='spearman'),2))
+names(cormat)[c(3,9)] <- c('% Blood Neutrophils','% Epithelial cells')
+rownames(cormat) <- colnames(cormat)
+
+cormat <- as.matrix(cormat)
+ord <- hclust(dist(cormat, method = "euclidean"), method = "complete")$order
+cormat <- cormat[rownames(cormat)[ord],rownames(cormat)[ord] ]
+
+melted_cormat <- melt(cormat)
+melted_cormat$diag <- melted_cormat$Var1 == melted_cormat$Var2
+melted_cormat$diag[!melted_cormat$diag] <- NA
+```
+
+```{r fig.width=3.5, fig.height=2.5}
+ggplot(data = melted_cormat, aes(x=Var2, y=Var1, fill=value)) + 
+  geom_tile(color = "darkgrey")+
+  geom_tile(data = melted_cormat[!is.na(melted_cormat$diag), ], aes(color = diag), size = 0.5) +
+  scale_color_manual(guide = FALSE, values = c(`TRUE` = "black"))+
+  scale_fill_gradient2(high = "#FDE725FF", low = "#440154FF", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Spearman\nCorrelation") +
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) +
+theme(axis.title = element_blank(), 
+  panel.background = element_blank(), axis.text.x = element_text(angle=45, hjust=1,vjust=1), axis.text=element_text(color='black', size=9))
+```
+```{r fig.width=3.5, fig.height=2.5}
+tiff('figures/prediction_heatmap.tiff', res=600, width = 5, height = 3.5, unit='in')
+
+ggplot(data = melted_cormat, aes(x=Var2, y=Var1, fill=value)) + 
+  geom_tile(color = "darkgrey")+
+  geom_tile(data = melted_cormat[!is.na(melted_cormat$diag), ], aes(color = diag), size = 0.5) +
+  scale_color_manual(guide = FALSE, values = c(`TRUE` = "black"))+
+  scale_fill_gradient2(high = "#FDE725FF", low = "#440154FF", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Spearman\nCorrelation") +
+  geom_text(aes(Var2, Var1, label = value), color = "black", size = 3) +
+theme(axis.title = element_blank(), 
+  panel.background = element_blank(), axis.text.x = element_text(angle=45, hjust=1,vjust=1), axis.text=element_text(color='black', size=9))
+dev.off()
+```
+
+# Scatterplots
+
+```{r}
+colnames(Ypred) <- colnames(metadata)
+df <- merge(Y, Ypred, by=0)
+rownames(df) <- df$Row.names
+df$Row.names <- NULL
+```
+
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_batch.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "Batch.x", y = "Batch.y", size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Batch")
+dev.off()
+```
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_age.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "Age.x", y = "Age.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE,size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Age")
+dev.off()
+```
+
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_sex.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "Sex.x", y = "Sex.y", size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Sex")
+dev.off()
+```
+
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_epi.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "Epi.x", y = "Epi.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE,size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")),size=2) +  
+ggtitle("% Epithelial cells")
+dev.off()
+```
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_neut.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "X..Blood.Neutrophil.x", y = "X..Blood.Neutrophil.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("% Blood Neutrophils")
+dev.off()
+```
+
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_hdl.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "HDL.x", y = "HDL.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("HDL")
+dev.off()
+```
+
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_hem.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "Hemoglobin.x", y = "Hemoglobin.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Hemoglobin")
+dev.off()
+```
+
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_rdw.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "RDW.x", y = "RDW.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("RDW")
+dev.off()
+```
+
+```{r fig.width=1.2, fig.height=1.1}
+tiff('figures/scatterplot_urea.tiff', res=600, width = 1.6, height = 1.5, unit='in')
+ggscatter(df, x = "Urea.x", y = "Urea.y", size = 0.2) +
+geom_smooth(color="#FDE725FF", method="lm", se=FALSE, size=0.5)+
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=5), plot.title = element_text(size=9, hjust=0.5))+ylab('Predicted') + xlab('Actual') +
+stat_cor(method = "spearman", aes(label = paste(..r.label.., ..p.label.., sep = "~`,`~")), size=2) +  
+ggtitle("Urea")
+dev.off()
+```
+```{r}
+rm(list=c('i','ord','cellfi','cormat','melted_cormat'))
+```
+
+# Model with 9 factors 
+
+```{r}
+Y <- as.data.frame(scale(metadata, center = FALSE, scale = TRUE))
+Y$added_col <- 1
+C <- pinv(as.matrix(Y)) %*% as.matrix(X)
+Xpred <- as.matrix(Y) %*% C
+```
+
+```{r}
+C <- C[1:9,]
+rownames(C) <- colnames(metadata)
+```
+
+```{r}
+error_matrix <- abs(Xpred-X)
+sd <- apply(X,2,sd) #sd for each site
+errormat_by_sd <- sweep(error_matrix, 2, sd, FUN = '/')
+errormat_by_sd_mean <- apply(errormat_by_sd,2,mean)
+```
+
+```{r}
+hist(errormat_by_sd_mean)
+```
+```{r}
+keep_sites <- as.data.frame(errormat_by_sd_mean[errormat_by_sd_mean < 0.5])
+dim(keep_sites)
+```
+# Check p value of the correlation between Mpred and Mo for these sites
+
+```{r}
+Mo_filt <- X[, rownames(keep_sites)]
+Mpred_filt <- as.data.frame(Xpred[, rownames(keep_sites)])
+
+corr_matrix <- as.data.frame(mapply(cor,Mo_filt,Mpred_filt))
+
+pvalues <- as.data.frame(t(mapply(\(x, y) cor.test(x, y)[c('estimate', 'p.value')], Mo_filt, Mpred_filt)))
+
+pvalues$estimate <- as.numeric(pvalues$estimate)
+pvalues$p.value <- as.numeric(pvalues$p.value)
+pvalues$FDR <- p.adjust(pvalues$p.value, method = "BH")
+```
+
+```{r fig.width=3, fig.height=2}
+ggplot(pvalues, aes(FDR)) + geom_histogram(fill="lightblue", color='black') + theme_classic() +
+  ylab('Count') + xlab('FDR') +
+  theme(axis.text = element_text(size=8), axis.title = element_text(size=10), 
+        panel.border = element_rect(fill=NA, color='black', linewidth = 0.1))
+```
+
+```{r fig.width=3, fig.height=2}
+keep_sites <- pvalues[pvalues$FDR < 0.01,]
+
+ggplot(keep_sites, aes(FDR)) + geom_histogram(fill="lightblue", color='black') + theme_classic() +
+  ylab('Count') + xlab('Adjusted pvalue') +
+  theme(axis.text = element_text(size=8), axis.title = element_text(size=10), 
+        panel.border = element_rect(fill=NA, color='black', linewidth = 0.1))
+```
+```{r}
+dim(keep_sites)
+```
+```{r}
+C_filtered <- C[, rownames(keep_sites)]
+rownames(C_filtered) <- colnames(metadata)
+```
+
+```{r fig.width=3, fig.height=2.7}
+C_filtered_norm <- t(C_filtered)
+C_filtered_norm <- normalize.rows(as.matrix(C_filtered_norm), method = "euclidean")
+C_filtered_norm <-C_filtered_norm[, c(9,3,1,2,4,5,6,7,8)]
+colnames(C_filtered_norm) <- c("% Epithelial cells", "% Blood Neutrophils","Age","Sex","Hemoglobin","RDW","Urea","HDL","Batch")
+```
+
+```{r fig.width=3.3, fig.height=3.7}
+set.seed(100)
+pheatmap(C_filtered_norm, cluster_rows = T, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 9,fontsize_row = 0.1)
+```
+
+```{r fig.width=2.3, fig.height=2.7}
+tiff('figures/coeff_matrix.tiff', res = 600, width = 3.2, height = 4.5, units = 'in')
+set.seed(100)
+pheatmap(C_filtered_norm, cluster_rows = T, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 0.001)
+dev.off()
+```
+
+```{r}
+C_final <- round(C_filtered_norm, 3) %>% as.data.frame()
+```
+
+# Linear models -> pvalue
+
+```{r}
+df_final <- merge(metadata,X[, rownames(keep_sites)], by=0)
+rownames(df_final) <- df_final$Row.names
+df_final$Row.names <- NULL
+```
+
+```{r}
+linear_models <- purrr::map(
+  df_final[,-c(1:9)],  # set the elements to iterate over: only sites
+  ~lm(.x ~ Age+Sex+X..Blood.Neutrophil+Hemoglobin+RDW+Urea+HDL+Epi+Batch, data = df_final))
+```
+
+```{r}
+linear_models2 <- map_df(linear_models, broom::tidy, .id = 'variable') %>% as.data.frame()
+linear_models2$FDR <- p.adjust(linear_models2$p.value, method = "BH")
+
+linear_models2 <- linear_models2[!linear_models2$term == '(Intercept)', ]
+linear_models2 <- linear_models2[, -c(3:6)]
+
+linear_models3 <- linear_models2 %>%
+  pivot_wider(names_from = term, values_from = FDR) %>% as.data.frame()
+
+rownames(linear_models3) <- linear_models3$variable
+linear_models3$variable <- NULL
+colnames(linear_models3) <- paste0('FDR','_', colnames(linear_models3))
+linear_models3 <- round(linear_models3, 3)
+```
+
+# Keep sites with FDR < 0.1, then for each site rank factors and keep only sites in which the factor of interest is in the first rank
+
+```{r}
+abs_matrix <- abs(C_final)
+
+sex_specific <- rownames(linear_models3[linear_models3$FDR_Sex < 0.1, ])
+rank_sex <- apply(abs_matrix[sex_specific, ], 1, rank) %>% as.data.frame()
+sex_specific2 <- names(rank_sex)[which(rank_sex['Sex',] == 9, arr.ind=T)[, "col"]]
+
+epi_specific <- rownames(linear_models3[linear_models3$FDR_Epi < 0.1, ])
+rank_epi <- apply(abs_matrix[epi_specific, ], 1, rank) %>% as.data.frame()
+epi_specific2 <- names(rank_epi)[which(rank_epi['% Epithelial cells',] == 9, arr.ind=T)[, "col"]]
+
+age_specific <- rownames(linear_models3[linear_models3$FDR_Age < 0.1, ])
+rank_age <- apply(abs_matrix[age_specific, ], 1, rank) %>% as.data.frame()
+age_specific2 <- names(rank_age)[which(rank_age['Age',] == 9, arr.ind=T)[, "col"]]
+
+batch_specific <- rownames(linear_models3[linear_models3$FDR_Batch < 0.1, ])
+rank_batch <- apply(abs_matrix[batch_specific, ], 1, rank) %>% as.data.frame()
+batch_specific2 <- names(rank_batch)[which(rank_batch['Batch',] == 9, arr.ind=T)[, "col"]]
+
+neut_specific <- rownames(linear_models3[linear_models3$FDR_X..Blood.Neutrophil < 0.1, ])
+rank_neut <- apply(abs_matrix[neut_specific, ], 1, rank) %>% as.data.frame()
+neut_specific2 <- names(rank_neut)[which(rank_neut['% Blood Neutrophils',] == 9, arr.ind=T)[, "col"]]
+
+hem_specific <- rownames(linear_models3[linear_models3$FDR_Hemoglobin < 0.1, ])
+rank_hem <- apply(abs_matrix[hem_specific, ], 1, rank) %>% as.data.frame()
+hem_specific2 <- names(rank_hem)[which(rank_hem['Hemoglobin',] == 9, arr.ind=T)[, "col"]]
+
+rdw_specific <- rownames(linear_models3[linear_models3$FDR_RDW < 0.1, ])
+rank_rdw <- apply(abs_matrix[rdw_specific, ], 1, rank) %>% as.data.frame()
+rdw_specific2 <- names(rank_rdw)[which(rank_rdw['RDW',] == 9, arr.ind=T)[, "col"]]
+
+urea_specific <- rownames(linear_models3[linear_models3$FDR_Urea < 0.1, ])
+rank_urea <- apply(abs_matrix[urea_specific, ], 1, rank) %>% as.data.frame()
+urea_specific2 <- names(rank_urea)[which(rank_urea['Urea',] == 9, arr.ind=T)[, "col"]]
+
+hdl_specific <- rownames(linear_models3[linear_models3$FDR_HDL < 0.1, ])
+rank_hdl <- apply(abs_matrix[hdl_specific, ], 1, rank) %>% as.data.frame()
+hdl_specific2 <- names(rank_hdl)[which(rank_hdl['HDL',] == 9, arr.ind=T)[, "col"]]
+```
+
+```{r}
+C_final2 <- C_final
+
+C_final2$Sex_specific <- ifelse(rownames(C_final2) %in% sex_specific2, 'Yes', 'No')
+C_final2$Age_specific <- ifelse(rownames(C_final2) %in% age_specific2, 'Yes', 'No')
+C_final2$Batch_specific <- ifelse(rownames(C_final2) %in% batch_specific2, 'Yes', 'No')
+C_final2$Epi_specific <- ifelse(rownames(C_final2) %in% epi_specific2, 'Yes', 'No')
+C_final2$Neut_specific <- ifelse(rownames(C_final2) %in% neut_specific2, 'Yes', 'No')
+C_final2$Hem_specific <- ifelse(rownames(C_final2) %in% hem_specific2, 'Yes', 'No')
+C_final2$RDW_specific <- ifelse(rownames(C_final2) %in% rdw_specific2, 'Yes', 'No')
+C_final2$Urea_specific <- ifelse(rownames(C_final2) %in% urea_specific2, 'Yes', 'No')
+C_final2$Hdl_specific <- ifelse(rownames(C_final2) %in% hdl_specific2, 'Yes', 'No')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=Sex, fill=Sex_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+  theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13)) + ggtitle('Sex')
+```
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=Age, fill=Age_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+  theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13)) + ggtitle('Age')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=`% Epithelial cells`, fill=Epi_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+   theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13))  + ggtitle('% Epithelial cells')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=`% Blood Neutrophils`, fill=Neut_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+   theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13))+ ggtitle('% Blood Neutrophils')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=Hemoglobin, fill=Hem_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+   theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13)) + ggtitle('Hemoglobin')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=RDW, fill=RDW_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+   theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13)) + ggtitle('RDW')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=Urea, fill=Urea_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+   theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13)) + ggtitle('Urea')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=HDL, fill=Hdl_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+   theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13)) + ggtitle('HDL')
+```
+
+```{r fig.width=3.5, fig.height=2}
+ggplot(C_final2, aes(x=Batch, fill=Batch_specific)) + 
+  geom_bar(width = 0.04) + theme_classic() + xlim(c(-1,1)) + 
+  scale_fill_manual(values=c(alpha("darkgrey",0.3),alpha("brown",0.8))) +
+  ylab('Count') + xlab('Coefficient value') +
+   theme(axis.text = element_text(size=9), axis.title = element_text(size=12), 
+        panel.border = element_rect(fill=NA, color='black'), plot.title = element_text(hjust = 0.5, size=13)) + ggtitle('Batch')
+```
+
+```{r}
+age_pos <- rownames(C_final2[C_final2$Age_specific == 'Yes' & C_final2$Age > 0, ])
+age_neg <- rownames(C_final2[C_final2$Age_specific == 'Yes' & C_final2$Age < 0, ])
+
+epi_pos <- rownames(C_final2[C_final2$Epi_specific == 'Yes' & C_final2$`% Epithelial cells` > 0, ])
+epi_neg <- rownames(C_final2[C_final2$Epi_specific == 'Yes' & C_final2$`% Epithelial cells` < 0, ])
+
+neut_pos <- rownames(C_final2[C_final2$Neut_specific == 'Yes' & C_final2$`% Blood Neutrophils` > 0, ])
+neut_neg <- rownames(C_final2[C_final2$Neut_specific == 'Yes' & C_final2$`% Blood Neutrophils` < 0, ])
+
+hem_pos <- rownames(C_final2[C_final2$Hem_specific == 'Yes' & C_final2$Hemoglobin > 0, ])
+hem_neg <- rownames(C_final2[C_final2$Hem_specific == 'Yes' & C_final2$Hemoglobin < 0, ])
+
+rdw_pos <- rownames(C_final2[C_final2$RDW_specific == 'Yes' & C_final2$RDW > 0, ])
+rdw_neg <- rownames(C_final2[C_final2$RDW_specific == 'Yes' & C_final2$RDW < 0, ])
+
+urea_pos <- rownames(C_final2[C_final2$Urea_specific == 'Yes' & C_final2$Urea > 0, ])
+urea_neg <- rownames(C_final2[C_final2$Urea_specific == 'Yes' & C_final2$Urea < 0, ])
+
+hdl_pos <- rownames(C_final2[C_final2$Hdl_specific == 'Yes' & C_final2$HDL > 0, ])
+hdl_neg <- rownames(C_final2[C_final2$Hdl_specific == 'Yes' & C_final2$HDL < 0, ])
+
+batch_pos <- rownames(C_final2[C_final2$Batch_specific == 'Yes' & C_final2$Batch > 0, ])
+batch_neg <- rownames(C_final2[C_final2$Batch_specific == 'Yes' & C_final2$Batch < 0, ])
+```
+
+# Some heatmaps
+
+```{r fig.width=3, fig.height=3}
+set.seed(100)
+breaksList = seq(-1, 1, by = 0.1)
+pheatmap(C_final[sex_specific2, ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 7,fontsize_row = 8,
+         breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+```
+
+```{r fig.width=1.6, fig.height=1.7}
+tiff('figures/sex_sites.tiff', res=600, width=2.5, height=2.5, unit='in')
+set.seed(100)
+breaksList = seq(-1, 1, by = 0.1)
+pheatmap(C_final[sex_specific2, ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 7,fontsize_row = 6,
+         breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+
+```{r fig.width=1.4, fig.height=2.5}
+tiff('figures/Age_heatmap.tiff', res=600, width=2.7, height=4.5, unit='in')
+set.seed(100)
+pheatmap(C_final[c(age_neg, age_pos), ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 0.001,
+         breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+```{r fig.width=1.4, fig.height=2.5}
+tiff('figures/Epi_heatmap.tiff', res=600, width=2.7, height=4.5, unit='in')
+set.seed(100)
+pheatmap(C_final[c(epi_neg, epi_pos), ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 0.001,
+breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+
+```{r fig.width=1.4, fig.height=2.5}
+tiff('figures/Neut_heatmap.tiff', res=600, width=2.3, height=3, unit='in')
+set.seed(100)
+pheatmap(C_final[c(neut_neg), ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 0.001,
+         breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+
+```{r fig.width=1.4, fig.height=2.5}
+tiff('figures/Hb_rdw_heatmap.tiff', res=600, width=2.3, height=3.5, unit='in')
+set.seed(100)
+pheatmap(C_final[c(hem_neg,  rdw_pos), ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 0.1,breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+
+```{r fig.width=1.7, fig.height=1}
+tiff('figures/HDL_heatmap.tiff', res=600, width=2.7, height=1.8, unit='in')
+set.seed(100)
+pheatmap(C_final[c(hdl_neg, hdl_pos), ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 6,
+         breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+
+```{r fig.width=1.7, fig.height=1}
+tiff('figures/Urea_heatmap.tiff', res=600, width=2.7, height=1.8, unit='in')
+set.seed(100)
+pheatmap(C_final[c(urea_neg, urea_pos), ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 6,breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+```{r fig.width=1.7, fig.height=1}
+tiff('figures/Batch_heatmap.tiff', res=600, width=2.7, height=1.85, unit='in')
+set.seed(100)
+pheatmap(C_final[c(batch_neg, batch_pos), ], cluster_rows = F, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 6,breaks = breaksList,color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(length(breaksList)))
+dev.off()
+```
+
+# Some plots
+
+## Chr X genes
+
+```{r fig.width=1.7, fig.height=1.5}
+sex_df <- df_final[, c('Sex', sex_specific2)]
+sex_df$Sex <- ifelse(sex_df$Sex == 0,'M','F')
+sex_df$Sex <- factor(sex_df$Sex, levels=c('M','F'))
+
+sex_df <- sex_df %>% group_by(Sex) %>% 
+  summarise(across(everything(), mean)) 
+rownames(sex_df) <- sex_df$Sex
+sex_df$Sex <- NULL
+sex_df <- t(sex_df)
+colnames(sex_df) <- c('M','F')
+
+tiff('figures/hyperm_females.tiff', res=600, width=2.8, height=2, unit='in')
+set.seed(100)
+pheatmap(sex_df, cluster_rows = T, cluster_cols = F, annotation_names_col = T, annotation_names_row=F, clustering_method = "complete", fontsize_col = 8,fontsize_row = 7, angle_col = "0")
+dev.off()
+```
+
+### Epithelial cells
+
+```{r}
+my_plot_list1 <- list()
+my_plot_list2 <- list()
+
+top_neg <- rownames(C_final[order(C_final$`% Epithelial cells`),][1:5, ])
+top_pos <- rownames(C_final[order(C_final$`% Epithelial cells`, decreasing = T),][1:5, ])
+
+for(i in 1:5){
+  p <- ggscatter(df_final, x = "Epi", y = top_pos[i], size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=7)) + xlab('% Epithelial cells')
+                
+my_plot_list1[[i]] <- p
+}
+
+for(i in 1:5){
+  g <- ggscatter(df_final, x = "Epi", y = top_neg[i], size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=7)) + xlab('% Epithelial cells')
+                
+my_plot_list2[[i]] <- g
+}
+```
+
+```{r fig.width=4, fig.height=1.2}
+tiff('figures/5_epi_pos.tiff', res=600, width=7.5, height=1.7, unit='in')
+ggarrange(plotlist = my_plot_list1, ncol=5, nrow=1)
+dev.off()
+
+tiff('figures/5_epi_neg.tiff', res=600, width=7.5, height=1.7, unit='in')
+ggarrange(plotlist = my_plot_list2, ncol=5, nrow=1)
+dev.off()
+```
+### Age
+
+```{r}
+my_plot_list1 <- list()
+my_plot_list2 <- list()
+
+top_neg <- rownames(C_final[order(C_final$Age),][1:5, ])
+top_pos <- rownames(C_final[order(C_final$Age, decreasing = T),][1:5, ])
+
+for(i in 1:5){
+  p <- ggscatter(df_final, x = "Age", y = top_pos[i], size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=7)) + xlab('Age')
+                
+my_plot_list1[[i]] <- p
+}
+
+for(i in 1:5){
+  g <- ggscatter(df_final, x = "Age", y = top_neg[i], size = 0.2) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=8), axis.text=element_text(size=7)) + xlab('Age')
+                
+my_plot_list2[[i]] <- g
+}
+```
+
+```{r fig.width=5, fig.height=1.2}
+tiff('figures/5_age_pos.tiff', res=600, width=7.5, height=1.7, unit='in')
+ggarrange(plotlist = my_plot_list1, ncol=5, nrow=1)
+dev.off()
+
+tiff('figures/5_age_neg.tiff', res=600, width=7.5, height=1.7, unit='in')
+ggarrange(plotlist = my_plot_list2, ncol=5, nrow=1)
+dev.off()
+```
+# Background Sites (bed file 16,160 sites)
+
+```{r}
+background_sites <- data.frame(do.call('rbind', strsplit(as.character(colnames(X)), '_', fixed=T)))
+colnames(background_sites) <- c('chrom','start')
+background_sites$chrom <- tolower(background_sites$chrom)
+background_sites$start <- as.numeric(background_sites$start)
+background_sites$end <- background_sites$start
+background_sites$end <- background_sites$end+1
+
+write.table(background_sites, 'results/background/background_sites.bed', sep='\t', quote=F, row.names = F)
+```
+
+# Background genes (bed file 16,160 sites)
+
+```{r}
+mart <- useMart('ENSEMBL_MART_ENSEMBL', host = 'ensembl.org', dataset = 'hsapiens_gene_ensembl')
+```
+
+```{r}
+background_sites$start <- background_sites$start-2000
+background_sites$end <- background_sites$end+1999
+background_sites$query <- paste(gsub("chr",'',background_sites$chrom),background_sites$start,
+                               background_sites$end, sep = ":")
+background_genes <- getBM(attributes = c('ensembl_gene_id',"hgnc_symbol",'gene_biotype',"chromosome_name", "start_position","end_position","strand"), filters = 'chromosomal_region', values = background_sites$query, mart = mart)
+
+write.table(background_genes, 'results/background/background_genes.txt', sep='\t', quote=F, row.names = F)
+```
+
+# Site-associated genes: functional enrichment
+
+```{r}
+result <- list()
+factor_specific_sites <- list(sex_specific2, age_pos, age_neg, epi_pos, epi_neg, neut_neg, hem_neg, rdw_pos, urea_pos,hdl_pos, batch_neg)
+
+for (i in 1:length(factor_specific_sites)){
+  
+my_list <- data.frame(do.call('rbind', strsplit(as.character(factor_specific_sites[[i]]), '_', fixed=T)))
+colnames(my_list) <- c('chrom','start')
+my_list$chrom <- tolower(my_list$chrom)
+my_list$start <- as.numeric(my_list$start)
+my_list$end <- my_list$start
+
+my_list$start <- my_list$start-2000
+my_list$end <- my_list$end+2000
+my_list$query <- paste(gsub("chr",'',my_list$chrom),my_list$start,my_list$end, sep = ":")
+
+result[[i]] <- my_list
+}
+
+associated_genes <- list()
+
+for (i in 1:length(result)){
+  associated_genes[[i]] <- getBM(attributes = c('ensembl_gene_id',"hgnc_symbol",'gene_biotype',"chromosome_name", "start_position","end_position","strand"), filters = 'chromosomal_region', values = result[[i]]$query, mart = mart)
+}
+
+write.xlsx(associated_genes, "results/factor_associated_genes.xlsx")
+```
+
+```{r}
+result <- list()
+
+for (i in 1:length(factor_specific_sites)){
+  
+my_list <- data.frame(do.call('rbind', strsplit(as.character(factor_specific_sites[[i]]), '_', fixed=T)))
+colnames(my_list) <- c('chrom','start')
+my_list$chrom <- tolower(my_list$chrom)
+my_list$start <- as.numeric(my_list$start)
+my_list$end <- my_list$start
+my_list$end <- my_list$end+1
+
+result[[i]] <- my_list
+
+write.table(result[[i]], paste0(i,".bed"), sep='\t', quote=F, row.names = F)
+}
+```
+
+```{r}
+rm(list=c('urea_specific','urea_specific2','urea_neg','top_pos','top_neg','sex_specific','rdw_specific','rdw_specific2','rdw_neg','neut_specific','neut_specific2','neut_pos','i','hem_specific','hem_specific2','hem_pos','hdl_specific','hdl_specific2','hdl_neg','epi_specific','epi_specific2','breaksList','batch_specific','batch_specific2','batch_pos','age_specific','age_specific2','Xpred','Xtest','Xtrain','Ytrain','sex_df','result','p','my_plot_list1','my_plot_list2','my_list','mart','g','factor_specific_sites','background_genes','background_sites'))
+```
+
+# MT meth
+
+```{r}
+MTmeth <- X[, c('ChrMT_316')]
+hist(MTmeth,xlim=c(0,0.14))
+```
+
+
+
+```{r}
+MTmeth <- read.table('C:/Users/protti/Desktop/Methylation/agg_matrix_forMT.txt', header = T, row.names = 1)
+```
+
+```{r}
+grep('MT', rownames(MTmeth), value=T)
+```
+
+```{r}
+MTmeth2 <- MTmeth[grepl('MT', rownames(MTmeth)), ]
+MTmeth2 <- t(MTmeth2)
+```
+
+```{r fig.width=5, fig.height=4}
+tiff('methMT.tiff', res=600, width=6, height=4, unit='in')
+set.seed(100)
+pheatmap(t(MTmeth2), cluster_rows = T, cluster_cols = F, annotation_names_col = F, annotation_names_row=T, clustering_method = "complete", fontsize_col = 001,fontsize_row = 8)
+dev.off()
+```
+
+```{r}
+colnames(MTmeth2) <- gsub(':','_',colnames(MTmeth2))
+MTmeth2 <- as.data.frame(MTmeth2)
+sites <- colnames(MTmeth2)
+MTmeth2$samples <- rownames(MTmeth2)
+plot_mt <- NULL
+```
+
+```{r}
+for(i in 1:23){
+  p <- ggscatter(MTmeth2, x = "samples", y = sites[i], size = 0.7) +
+theme(panel.border = element_rect(fill = NA, colour = 'black', linewidth = 0.5), axis.title=element_text(size=12), axis.text.x=element_blank(),axis.text.y=element_text(size=9)) + xlab('Samples') + ylab('Methylation') + ggtitle(sites[i])
+                
+plot_mt[[i]] <- p
+}
+```
+
+```{r fig.width=9, fig.height=4}
+ggarrange(plotlist = plot_mt, ncol=8, nrow=3)
+```
+
+```{r}
+res <- colMeans(MTmeth2[ , 1:23], na.rm = T)
+```
+
+```{r}
+mean(res) 
+```
+
